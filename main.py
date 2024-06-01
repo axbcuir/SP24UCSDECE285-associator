@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+
 from utils import *
 from PIL import Image
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
@@ -14,18 +16,13 @@ clip_model, preprocess = clip.load("ViT-B/32", device=device)
 
 associator = Associator(sam, clip_model, preprocess)
 
-room1 = cv2.imread('images/room/1.jpg')
-room2 = cv2.imread('images/room/2.jpg')
-room3 = cv2.imread('images/room/3.jpg')
-room4 = cv2.imread('images/room/4.jpg')
-room5 = cv2.imread('images/room/5.jpg')
+img_path = 'images/a'
 
-imgs = [room1, room2, room3, room4, room5]
-for img in imgs:
-    associator.add_img(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+imgs = read_images_from_directory(img_path)
+for img in imgs[:5]:
+    associator.add_img(img)
 
-# the target should be the vase
-target = associator.cutout_region(associator.imgs[0]['img'], associator.imgs[0]['segments'][10]['mask'])
+target = associator.cutout_region(associator.imgs[0]['img'], associator.imgs[0]['segments'][39]['mask'])
 
 # show the target
 plt.imshow(target)
@@ -34,10 +31,4 @@ plt.show()
 # find associated objects
 associated_cutouts = associator.query(target)
 
-# this one is good
-plt.imshow(associated_cutouts[2])
-plt.show()
-
-# this one is bad
-plt.imshow(associated_cutouts[4])
-plt.show()
+show_images_grid(associated_cutouts)

@@ -3,6 +3,8 @@ import torch
 import matplotlib.pyplot as plt
 import cv2
 import sys
+import os
+import math
 sys.path.append("..")
 
 
@@ -49,3 +51,40 @@ def show_box(box, ax):
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0, 0, 0, 0), lw=2))
+
+
+def read_images_from_directory(directory_path):
+    images = []
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".jpg") or filename.endswith(".png") or filename.endswith(".jpeg"):
+            img_path = os.path.join(directory_path, filename)
+            img = cv2.imread(img_path)
+            if img is not None:
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                images.append(img_rgb)
+    return images
+
+
+def show_images_grid(images):
+    # Determine grid size
+    num_images = len(images)
+    grid_size = math.ceil(math.sqrt(num_images))
+
+    # Create figure and subplots
+    fig, axs = plt.subplots(grid_size, grid_size, figsize=(12, 12))
+
+    # Flatten the axs array for easy indexing, in case grid is not a perfect square
+    axs = axs.flatten()
+
+    for i in range(num_images):
+        axs[i].imshow(images[i], cmap='gray')
+        axs[i].set_title(f'Image {i + 1}')
+        axs[i].axis('off')  # Hide axes
+
+    # Hide any remaining subplots
+    for j in range(num_images, len(axs)):
+        fig.delaxes(axs[j])
+
+    # Adjust layout
+    plt.tight_layout()
+    plt.show()
