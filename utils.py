@@ -56,7 +56,7 @@ def show_box(box, ax):
 def read_images_from_directory(directory_path):
     images = []
     for filename in os.listdir(directory_path):
-        if filename.endswith(".jpg") or filename.endswith(".png") or filename.endswith(".jpeg"):
+        if filename.endswith(".jpg") or filename.endswith(".jpeg"):
             img_path = os.path.join(directory_path, filename)
             img = cv2.imread(img_path)
             if img is not None:
