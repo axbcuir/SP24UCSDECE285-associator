@@ -30,6 +30,7 @@ class Associator():
             'img': img,
             'segments': embeddings
         }
+        print("Added an image.")
         self.imgs.append(img_info)
 
     def generate_masks(self, img):
@@ -125,7 +126,7 @@ class Associator():
 
         return largest_mask, largest_mask_index
         # return n
-    
+
     def test(self, img):
         """
         Function for Test some utils of Associator.
@@ -146,29 +147,88 @@ class Associator():
         return self.cutout_region(img['img'], img['segments'][largest_mask_index]['mask'])
         # return self.find_largest_inclusive_mask(msk, msk_list)
 
-    def query(self, img):
+    def find_closest(self, query, cloud, mode='euclidean'):
+        """
+        Given a query point and cloud, find the closest point on the cloud.
+        :param query: np.ndarray
+        :param cloud: np.ndarray
+        :param mode: 'euclidean' or 'cosine'
+        :return: idx: int, there_is: bool
+        """
+        there_is = False
+        if mode == 'euclidean':
+            tree = KDTree(cloud)
+            dists, idxs = tree.query(query, k=10)
+            # empirical rule to judge whether there actually is a matching segment
+            differences = [dists[i + 1] - dists[i] for i in range(len(dists) - 1)]
+            criterion = np.max(differences)
+            print(criterion)
+            idx = idxs[0]
+            if criterion < 0.5:
+                there_is = False
+            else:
+                there_is = True
+        # DEPRECATED
+        elif mode == 'cosine':
+            cloud = cloud.T
+            cloud_norms = np.linalg.norm(cloud, axis=0)
+            cloud = cloud / cloud_norms
+            query = query / np.linalg.norm(query)
+            cosines = np.dot(query, cloud)
+            # print(np.sort(cosines)[:-11:-1])
+            idx = np.argmax(cosines)
+        else:
+            raise ValueError('Mode must be "euclidean" or "cosine"')
+
+        return idx, there_is
+
+    def query(self, img, mode='euclidean'):
         """
         Given an image of an object, find the same object in already seen images
         :param img: np.ndarray
+        :param mode: 'euclidean' or 'cosine'
         :return: res: list of associated image cutouts
         """
         with torch.no_grad():
             query_point = self.clip_encode(img)
-
         res = []
-        for img in self.imgs:
-            embedding_list = np.array([segment['embedding'] for segment in img['segments']])
-            tree = KDTree(embedding_list)
-            _, idx = tree.query(query_point)
+        for seen_img in self.imgs:
+            embedding_list = np.array([segment['embedding'] for segment in seen_img['segments']])
+            idx, success = self.find_closest(query_point, embedding_list, mode)
 
             # find the largest inclusive part
-            mask = img['segments'][idx]['mask']
+            mask = seen_img['segments'][idx]['mask']
             msk = mask['segmentation'].astype(np.uint8)
 
-            msk_list = np.array([segment['mask']['segmentation'].astype(np.uint8) for segment in img['segments']])
+            msk_list = np.array([segment['mask']['segmentation'].astype(np.uint8)
+                                 for segment in seen_img['segments']])
             largest_mask, largest_mask_index = self.find_largest_inclusive_mask(msk, msk_list)
 
-            res.append(self.cutout_region(img['img'], img['segments'][largest_mask_index]['mask']))
+            result = self.cutout_region(seen_img['img'], seen_img['segments'][largest_mask_index]['mask'])
+            if success:
+                res.append(result)
+            else:
+                res.append(none_img(result))
 
         torch.cuda.empty_cache()  # save VRAM
         return res
+
+    def visualize_segments(self, img_idx, seg_idx_start, seg_idx_end):
+        """
+        Visualize segments from an image
+        :param img_idx: int
+        :param seg_idx_start: int
+        :param seg_idx_end: int
+        """
+        cutouts = []
+        num_of_segments = len(self.imgs[img_idx]['segments'])
+        if seg_idx_end > num_of_segments:
+            seg_idx_end = num_of_segments
+        if seg_idx_end - seg_idx_start > 36:
+            raise ValueError('Too many to visualize')
+        if seg_idx_start >= seg_idx_end:
+            raise ValueError('Segment idx start >= segment idx end')
+        for i in range(seg_idx_start, seg_idx_end):
+            cutout = self.cutout_region(self.imgs[img_idx]['img'], self.imgs[img_idx]['segments'][i]['mask'])
+            cutouts.append(cutout)
+        show_images_grid(cutouts)

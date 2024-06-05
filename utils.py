@@ -88,3 +88,27 @@ def show_images_grid(images):
     # Adjust layout
     plt.tight_layout()
     plt.show()
+
+
+def none_img(bg=None):
+    # Create a black background image
+    height, width = 100, 100  # You can adjust the size as needed
+    if bg is None:
+        bg = np.zeros((height, width, 3), dtype=np.uint8)
+
+    # Define the text and its properties
+    text = "None"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = bg.shape[1] / 100
+    font_color = (255, 0, 0)  # Red color text
+    thickness = round(2 * font_scale)
+    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+
+    # Calculate the text position so it's centered
+    text_x = (bg.shape[1] - text_size[0]) // 2
+    text_y = (bg.shape[0] + text_size[1]) // 2
+
+    # Add the text to the black background
+    cv2.putText(bg, text, (text_x, text_y), font, font_scale, font_color, thickness)
+
+    return bg
