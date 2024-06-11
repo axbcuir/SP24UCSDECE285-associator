@@ -5,7 +5,7 @@ from scipy.spatial import KDTree
 from PIL import Image
 import pickle
 import numpy as np
-from tree import *
+import matplotlib.pyplot as plt
 
 class Associator():
 
@@ -26,12 +26,11 @@ class Associator():
 
     def add_img(self, img):
         masks = self.generate_masks(img)
-        segment_trees = self.embed_image(img, masks)
+        embeddings = self.embed_image(img, masks)
         img_info = {
             'img': img,
-            'segments': segment_trees
+            'segments': embeddings
         }
-        print("Added an image.")
         self.imgs.append(img_info)
 
     def generate_masks(self, img):
@@ -77,96 +76,107 @@ class Associator():
                 'embedding': embedding
             }
             segments.append(segment_descriptor)
+
         torch.cuda.empty_cache()    # save VRAM
+        return segments
 
-        # sort the segments by decending area
-        segments.sort(key=lambda x: x['mask']['area'], reverse=True)
-
-        return trees_from_sorted_list(segments, self.is_child)
-
-    def is_child(self, proposed_child, proposed_parent, overlap_threshold=0.9):
+    def inspect_segment(self, img_idx, segment_idx):
+        img = self.imgs[img_idx]['img']
+        mask = self.imgs[img_idx]['segments'][segment_idx]['mask']
+        cutout = self.cutout_region(img, mask)
+        plt.imshow(cutout)
+        plt.show()
+    
+    def find_largest_inclusive_mask(self, target_mask, mask_list, overlap_threshold=0.9):
         """
-        Determine if a mask is a subset of another mask
-        :param proposed_child: dict
-        :param proposed_parent: dict
-        :param overlap_threshold: float
-        :return: bool
-        """
-        # Calculate the intersection
-        intersection = np.logical_and(proposed_child['mask']['segmentation'], proposed_parent['mask']['segmentation'])
-        intersection_area = np.sum(intersection)
-        # Calculate the overlap percentage
-        child_area = proposed_child['mask']['area']
-        overlap_percentage = intersection_area / child_area
+        Finds the largest mask in a list that overlaps with the target mask by at least a specified percentage.
 
-        return overlap_percentage >= overlap_threshold
+        Parameters:
+        - target_mask (np.array): The target mask as a numpy array with elements 0 or 1.
+        - mask_list (list of np.array): List of masks, each an numpy array formatted like the target_mask.
+        - overlap_threshold (float): The minimum overlap percentage required (between 0 and 1).
 
-    def find_closest(self, query, cloud):
+        Returns:
+        - largest_mask (np.array): The largest mask that includes the target mask.
+        - largest_mask_index (int): Index of the found mask in the list.
         """
-        Given a query point and cloud, find the closest point on the cloud.
-        :param query: np.ndarray
-        :param cloud: np.ndarray
-        :param mode: 'euclidean' or 'cosine'
-        :return: idx: int, high_match: bool
-        """
-        high_match = False
-        tree = KDTree(cloud)
-        dists, idxs = tree.query(query, k=10)
-        # empirical rule to judge whether there actually is a matching segment
-        differences = [dists[i + 1] - dists[i] for i in range(len(dists) - 1)]
-        criterion = np.max(differences)
-        print(criterion)
-        idx = idxs[0]
-        if criterion < 1:
-            high_match = False
-        else:
-            high_match = True
+        largest_area = 0
+        largest_mask = None
+        largest_mask_index = -1
 
-        return idx, high_match
+        target_area = np.sum(target_mask)
+
+        n = 0
+        for index, mask in enumerate(mask_list):
+            # Calculate the intersection
+            intersection = np.logical_and(target_mask, mask)
+            intersection_area = np.sum(intersection)
+
+            # Calculate the overlap percentage
+            overlap_percentage = intersection_area / target_area
+
+            # Check if the overlap is above the threshold
+            if overlap_percentage >= overlap_threshold:
+                n += 1
+                current_area = np.sum(mask)
+                if current_area > largest_area:
+                    largest_area = current_area
+                    largest_mask = mask
+                    largest_mask_index = index
+
+        return largest_mask, largest_mask_index
+        # return n
+    
+    def test(self, img):
+        """
+        Function for Test some utils of Associator.
+        """
+        with torch.no_grad():
+              query_point = self.clip_encode(img)
+        img = self.imgs[6]   # second image
+        embedding_list = np.array([segment['embedding'] for segment in img['segments']])
+        tree = KDTree(embedding_list)
+        _, idx = tree.query(query_point)
+        mask = img['segments'][idx]['mask']
+        msk = mask['segmentation'].astype(np.uint8)
+
+        # Find Largest Inclusive Mask
+        msk_list = np.array([segment['mask']['segmentation'].astype(np.uint8) for segment in img['segments']])
+        largest_mask, largest_mask_index = self.find_largest_inclusive_mask(msk, msk_list)
+
+        return self.cutout_region(img['img'], img['segments'][largest_mask_index]['mask'])
+        # return self.find_largest_inclusive_mask(msk, msk_list)
+
+    def find_MaxTarget(self, img, mask):
+        msk = mask['segmentation'].astype(np.uint8)
+        msk_list = np.array([segment['mask']['segmentation'].astype(np.uint8) for segment in img['segments']])
+        largest_mask, largest_mask_index = self.find_largest_inclusive_mask(msk, msk_list)
+
+        return self.cutout_region(img['img'], img['segments'][largest_mask_index]['mask'])
 
     def query(self, img):
         """
         Given an image of an object, find the same object in already seen images
         :param img: np.ndarray
-        :param mode: 'euclidean' or 'cosine'
         :return: res: list of associated image cutouts
         """
         with torch.no_grad():
             query_point = self.clip_encode(img)
+
         res = []
-        for seen_img in self.imgs:
-            embedding_list = np.array([a['embedding'] for a in nodes_to_list(seen_img['segments'])])
-            idx, success = self.find_closest(query_point, embedding_list)
+        for img in self.imgs:
+            embedding_list = np.array([segment['embedding'] for segment in img['segments']])
+            tree = KDTree(embedding_list)
+            _, idx = tree.query(query_point)
 
             # find the largest inclusive part
-            root_idx = seen_img['segments'].index(seen_img['segments'][idx].get_root())
-            root_mask = seen_img['segments'][root_idx].get_value()['mask']
-            result = self.cutout_region(seen_img['img'], root_mask)
-            if success:
-                res.append(result)
-            else:
-                res.append(none_img(result))
+            mask = img['segments'][idx]['mask']
+            msk = mask['segmentation'].astype(np.uint8)
+
+            msk_list = np.array([segment['mask']['segmentation'].astype(np.uint8) for segment in img['segments']])
+            largest_mask, largest_mask_index = self.find_largest_inclusive_mask(msk, msk_list)
+
+            res.append(self.cutout_region(img['img'], img['segments'][largest_mask_index]['mask']))
 
         torch.cuda.empty_cache()  # save VRAM
         return res
-
-    def visualize_segments(self, img_idx, seg_idx_start, seg_idx_end):
-        """
-        Visualize segments from an image
-        :param img_idx: int
-        :param seg_idx_start: int
-        :param seg_idx_end: int
-        """
-        cutouts = []
-        num_of_segments = len(self.imgs[img_idx]['segments'])
-        if seg_idx_end > num_of_segments:
-            seg_idx_end = num_of_segments
-        if seg_idx_end - seg_idx_start > 36:
-            raise ValueError('Too many to visualize')
-        if seg_idx_start >= seg_idx_end:
-            raise ValueError('Segment idx start >= segment idx end')
-        for i in range(seg_idx_start, seg_idx_end):
-            mask = self.imgs[img_idx]['segments'][i].get_value()['mask']
-            cutout = self.cutout_region(self.imgs[img_idx]['img'], mask)
-            cutouts.append(cutout)
-        show_images_grid(cutouts)
